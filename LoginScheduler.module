@@ -1,0 +1,216 @@
+<?php
+
+/**
+ * Login Scheduler
+ * 
+ * This module provides the ability to a) disable login for any given user
+ * or b) define a timeframe where an account is active.
+ * 
+ * @copyright Copyright (c) 2015, Teppo Koivula
+ * @license http://www.gnu.org/licenses/gpl-2.0.txt GNU General Public License, version 2
+ */
+class LoginScheduler extends WireData implements Module, ConfigurableModule {
+    
+    /**
+     * Return information about this module
+     *
+     * @return array
+     */
+    public static function getModuleInfo() {
+        return array(
+            'title' => 'Login Scheduler',
+            'summary' => 'Adds support for enabling or disabling login for given user.',
+            'href' => '',
+            'author' => 'Teppo Koivula',
+            'version' => '1.0.0',
+            'singular' => true,
+            'autoload' => true,
+        ); 
+    }
+
+    /**
+     * Default configuration for this module
+     *
+     * The point of putting this in it's own function is so that you don't have to specify
+     * these defaults more than once.
+     *
+     * @return array
+     */
+    static public function getDefaultData() {
+        return array(
+            'remove_fields_on_uninstall' => 0,
+        );
+    }
+    
+    /**
+     * Populate the default config data
+     *
+     * ProcessWire will automatically overwrite it with anything the user has specifically configured.
+     * This is done in construct() rather than init() because ProcessWire populates config data after
+     * construct(), but before init().
+     *
+     */
+    public function __construct() {
+        foreach(self::getDefaultData() as $key => $value) {
+            $this->$key = $value;
+        }
+    }
+
+    /**
+     * Module configuration
+     * 
+     * Note: this module isn't meant to be configurable in the usual way. While
+     * native features are used to define config inputfields, and user-provided
+     * config settings are stored just like regular config settings, the user
+     * only ever accesses them via the main module, VersionControl.
+     *
+     * @param array $data
+     * @return InputfieldWrapper
+     */
+    static public function getModuleConfigInputfields(array $data) {
+
+        // this is a container for fields, basically like a fieldset
+        $fields = new InputfieldWrapper();
+
+        // merge default config settings (custom values overwrite defaults)
+        $defaults = self::getDefaultData();
+        $data = array_merge($defaults, $data);
+
+        // remove related fields when module is uninstalled?
+        $field = wire('modules')->get('InputfieldCheckbox');
+        $field->name = 'remove_fields_on_uninstall';
+        $field->label = __('Remove related fields when this module is uninstalled?');
+        $field->description = __('If you want to remove related fields along with their data when this module is uninstalled, you should enable this option and save module configuration *before* uninstalling the module.');
+        if (isset($data[$field->name]) && $data[$field->name]) $field->checked = 'checked';
+        $fields->add($field);
+
+        return $fields;
+        
+    }
+
+    /**
+     * Initialization function
+     *
+     */
+    public function init() {
+        $this->addHook('Session::allowLogin', $this, 'allowLogin');
+    }
+
+    /**
+     * Define whether given user should be allowed to login
+     * 
+     * @param HookEvent $event
+     */
+    public function allowLogin(HookEvent $event) {
+        $return = false;
+        $name = $event->arguments[0];
+        if ($name && $name == wire('sanitizer')->userName($name)) {
+            $user = wire('users')->get('name=' . $name);
+            if ($user->id && !$user->user_login_disabled) {
+                $from = $user->getUnformatted('user_login_enabled_from');
+                $until = $user->getUnformatted('user_login_enabled_until');
+                $return = (!$from || $from < time()) && (!$until || $until > time());
+            }
+        }
+        $event->return = $return;
+    }
+
+    /**
+     * When module is installed, create required fields and add them to user
+     * template(s)/fieldgroup(s).
+     * 
+     * @throws WireException if field already exists, but is of wrong type
+     */
+    public function install() {
+        
+        // login disabled (checkbox)
+        $user_login_disabled = wire('fields')->get('user_login_disabled');
+        if (!$user_login_disabled) {
+            $user_login_disabled = new Field;
+            $user_login_disabled->type = wire('modules')->get('FieldtypeCheckbox');
+            $user_login_disabled->name = 'user_login_disabled';
+            $user_login_disabled->label = 'Login disabled';
+            $user_login_disabled->save();
+        } else if ($user_login_disabled->type != 'FieldtypeCheckbox') {
+            throw new WireException("Field 'user_login_disabled' exists, but is of wrong type!");
+        }
+
+        // login enabled starting from (datetime)
+        $user_login_enabled_from = wire('fields')->get('user_login_enabled_from');
+        if (!$user_login_enabled_from) {
+            $user_login_enabled_from = new Field;
+            $user_login_enabled_from->type = wire('modules')->get('FieldtypeDatetime');
+            $user_login_enabled_from->name = 'user_login_enabled_from';
+            $user_login_enabled_from->label = 'Login enabled starting from';
+            $user_login_enabled_from->columnWidth = 50;
+            $user_login_enabled_from->datepicker = 3;
+            $user_login_enabled_from->dateInputFormat = "Y-m-d";
+            $user_login_enabled_from->timeInputFormat = "H:i";
+            $user_login_enabled_from->dateOutputFormat = "Y-m-d H:i";
+            $user_login_enabled_from->save();
+        } else if ($user_login_enabled_from->type != 'FieldtypeDatetime') {
+            throw new WireException("Field 'user_login_enabled_from' exists, but is of wrong type!");
+        }
+
+        // login enabled until (datetime)
+        $user_login_enabled_until = wire('fields')->get('user_login_enabled_until');
+        if (!$user_login_enabled_until) {
+            $user_login_enabled_until = new Field;
+            $user_login_enabled_until->type = wire('modules')->get('FieldtypeDatetime');
+            $user_login_enabled_until->name = 'user_login_enabled_until';
+            $user_login_enabled_until->label = 'Login enabled until';
+            $user_login_enabled_until->columnWidth = 50;
+            $user_login_enabled_until->datepicker = 3;
+            $user_login_enabled_until->dateInputFormat = "Y-m-d";
+            $user_login_enabled_until->timeInputFormat = "H:i";
+            $user_login_enabled_until->dateOutputFormat = "Y-m-d H:i";
+            $user_login_enabled_until->save();
+        } else if ($user_login_enabled_until->type != 'FieldtypeDatetime') {
+            throw new WireException("Field 'user_login_enabled_until' exists, but is of wrong type!");
+        }
+
+        // add fields to user template(s)/fieldgroup(s)
+        $template_ids = wire('config')->userTemplateIDs ? wire('config')->userTemplateIDs : array(wire('config')->userTemplateID);
+        foreach ($template_ids as $template_id) {
+            $template = wire('templates')->get((int) $template_id);
+            if ($template->id) {
+                $template->fields->add($user_login_disabled);
+                $template->fields->add($user_login_enabled_from);
+                $template->fields->add($user_login_enabled_until);
+                $template->fields->save();
+            }
+        }
+        
+    }
+
+    /**
+     * When module is uninstalled, remove related fields, but only if this is
+     * explicitly enabled via module configuration settings.
+     * 
+     */
+    public function uninstall() {
+        if ($this->remove_fields_on_uninstall) {
+            $field_names = array(
+                'user_login_disabled',
+                'user_login_enabled_from',
+                'user_login_enabled_until',
+            );
+            $template_ids = wire('config')->userTemplateIDs ? wire('config')->userTemplateIDs : array(wire('config')->userTemplateID);
+            foreach ($template_ids as $template_id) {
+                $template = wire('templates')->get((int) $template_id);
+                if ($template->id) {
+                    foreach ($field_names as $field_name) {
+                        $field = wire('fields')->get($field_name);
+                        $template->fields->remove($field);
+                        $template->fields->save();
+                    }
+                }
+            }
+            foreach ($field_names as $field_name) {
+                $field = wire('fields')->get($field_name);
+                wire('fields')->delete($field);
+            }
+        }
+    }
+
+}
