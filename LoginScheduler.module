@@ -22,7 +22,7 @@ class LoginScheduler extends WireData implements Module, ConfigurableModule {
             'summary' => 'Adds support for enabling or disabling login for given user.',
             'href' => '',
             'author' => 'Teppo Koivula',
-            'version' => '1.0.0',
+            'version' => '1.1.0',
             'singular' => true,
             'autoload' => true,
         ); 
@@ -51,6 +51,7 @@ class LoginScheduler extends WireData implements Module, ConfigurableModule {
      *
      */
     public function __construct() {
+        $this->addHookAfter('Session::isValidSession', $this, 'isValidSession');
         foreach(self::getDefaultData() as $key => $value) {
             $this->$key = $value;
         }
@@ -97,22 +98,55 @@ class LoginScheduler extends WireData implements Module, ConfigurableModule {
     }
 
     /**
-     * Define whether given user should be allowed to login
+     * Check if this user is allowed to login
      * 
      * @param HookEvent $event
      */
     public function allowLogin(HookEvent $event) {
-        $return = false;
+        $return = true;
         $name = $event->arguments[0];
         if ($name && $name == wire('sanitizer')->userName($name)) {
             $user = wire('users')->get('name=' . $name);
-            if ($user->id && !$user->user_login_disabled) {
-                $from = $user->getUnformatted('user_login_enabled_from');
-                $until = $user->getUnformatted('user_login_enabled_until');
-                $return = (!$from || $from < time()) && (!$until || $until > time());
+            if ($user && $user->id) {
+                $return = $this->isLoginAllowed($user);
             }
         }
         $event->return = $return;
+    }
+
+    /**
+     * Check if this session is valid (i.e. user is still allowed to login)
+     * 
+     * @param HookEvent $event
+     */
+    public function isValidSession(HookEvent $event) {
+        if ($event->return) {
+            $userID = (int) $event->arguments[0];
+            $user = wire('users')->get($userID);
+            if ($user && $user->id && !$this->isLoginAllowed($user)) {
+                $event->return = false;
+            }
+        }
+    }
+
+    /**
+     * Is this user allowed to login?
+     * 
+     * @param User $user
+     * @return bool
+     */
+    private function isLoginAllowed(User $user) {
+        $return = true;
+        if ($user->id && !$user->hasRole('superuser')) {
+            if ($user->user_login_disabled) {
+                $return = false;
+            } else {
+                $from = $user->getUnformatted('user_login_enabled_from');
+                $until = $user->getUnformatted('user_login_enabled_until');
+                $return = !(($from && $from > time()) || ($until && $until < time()));
+            }
+        }
+        return $return;
     }
 
     /**
@@ -122,6 +156,30 @@ class LoginScheduler extends WireData implements Module, ConfigurableModule {
      * @throws WireException if field already exists, but is of wrong type
      */
     public function install() {
+
+        // container for login scheduler fields (fieldset)
+        $user_login_fieldset = wire('fields')->get('user_login_fieldset');
+        if (!$user_login_fieldset) {
+            $user_login_fieldset = new Field;
+            $user_login_fieldset->type = wire('modules')->get('FieldtypeFieldsetOpen');
+            $user_login_fieldset->name = 'user_login_fieldset';
+            $user_login_fieldset->label = 'Login Scheduler';
+            $user_login_fieldset->description = 'Login Scheduler allows you to disable login for any given (non-superuser) account. Logged in users will be logged out during next page load.';
+            $user_login_fieldset->icon = 'clock-o';
+            $user_login_fieldset->showIf = 'roles!=superuser';
+            $user_login_fieldset->save();
+        } else if ($user_login_fieldset->type != 'FieldtypeFieldsetOpen') {
+            throw new WireException("Field 'user_login_fieldset' exists, but is of wrong type!");
+        }
+        $user_login_fieldset_close = wire('fields')->get('user_login_fieldset' . FieldtypeFieldsetOpen::fieldsetCloseIdentifier);
+        if (!$user_login_fieldset_close) {
+            $user_login_fieldset_close = new Field;
+            $user_login_fieldset_close->type = wire('modules')->get('FieldtypeFieldsetClose');
+            $user_login_fieldset_close->name = 'user_login_fieldset' . FieldtypeFieldsetOpen::fieldsetCloseIdentifier;
+            $user_login_fieldset_close->save();
+        } else if ($user_login_fieldset_close->type != 'FieldtypeFieldsetClose') {
+            throw new WireException("Field 'user_login_fieldset_close' exists, but is of wrong type!");
+        }
         
         // login disabled (checkbox)
         $user_login_disabled = wire('fields')->get('user_login_disabled');
@@ -130,6 +188,7 @@ class LoginScheduler extends WireData implements Module, ConfigurableModule {
             $user_login_disabled->type = wire('modules')->get('FieldtypeCheckbox');
             $user_login_disabled->name = 'user_login_disabled';
             $user_login_disabled->label = 'Login disabled';
+            $user_login_disabled->notes = 'Note that this will override any values populated in the \'Login enabled starting from\' field.';
             $user_login_disabled->save();
         } else if ($user_login_disabled->type != 'FieldtypeCheckbox') {
             throw new WireException("Field 'user_login_disabled' exists, but is of wrong type!");
@@ -174,9 +233,11 @@ class LoginScheduler extends WireData implements Module, ConfigurableModule {
         foreach ($template_ids as $template_id) {
             $template = wire('templates')->get((int) $template_id);
             if ($template->id) {
+                $template->fields->add($user_login_fieldset);
                 $template->fields->add($user_login_disabled);
                 $template->fields->add($user_login_enabled_from);
                 $template->fields->add($user_login_enabled_until);
+                $template->fields->add($user_login_fieldset_close);
                 $template->fields->save();
             }
         }
@@ -191,6 +252,8 @@ class LoginScheduler extends WireData implements Module, ConfigurableModule {
     public function uninstall() {
         if ($this->remove_fields_on_uninstall) {
             $field_names = array(
+                'user_login_fieldset',
+                'user_login_fieldset' . FieldtypeFieldsetOpen::fieldsetCloseIdentifier,
                 'user_login_disabled',
                 'user_login_enabled_from',
                 'user_login_enabled_until',
@@ -201,14 +264,16 @@ class LoginScheduler extends WireData implements Module, ConfigurableModule {
                 if ($template->id) {
                     foreach ($field_names as $field_name) {
                         $field = wire('fields')->get($field_name);
-                        $template->fields->remove($field);
-                        $template->fields->save();
+                        if ($field) {
+                            $template->fields->remove($field);
+                            $template->fields->save();
+                        }
                     }
                 }
             }
             foreach ($field_names as $field_name) {
                 $field = wire('fields')->get($field_name);
-                wire('fields')->delete($field);
+                if ($field) wire('fields')->delete($field);
             }
         }
     }
