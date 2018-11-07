@@ -3,10 +3,11 @@
 /**
  * Login Scheduler
  * 
- * This module provides the ability to a) disable login for any given user
- * or b) define a timeframe where an account is active.
+ * This module provides the ability to a) disable login for any (non-superuser)
+ * user or b) define a timeframe (start and end date) during which an account
+ * is active.
  * 
- * @copyright Copyright (c) 2015, Teppo Koivula
+ * @copyright 2015-2018 Teppo Koivula
  * @license http://www.gnu.org/licenses/gpl-2.0.txt GNU General Public License, version 2
  */
 class LoginScheduler extends WireData implements Module, ConfigurableModule {
