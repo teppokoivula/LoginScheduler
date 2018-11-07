@@ -22,7 +22,7 @@ class LoginScheduler extends WireData implements Module, ConfigurableModule {
             'summary' => 'Adds support for enabling or disabling login for given user.',
             'href' => '',
             'author' => 'Teppo Koivula',
-            'version' => '1.1.0',
+            'version' => '1.2.0',
             'singular' => true,
             'autoload' => true,
         ); 
@@ -168,6 +168,7 @@ class LoginScheduler extends WireData implements Module, ConfigurableModule {
             $user_login_fieldset->icon = 'clock-o';
             $user_login_fieldset->showIf = 'roles!=superuser';
             $user_login_fieldset->save();
+            $this->session->message($this->_("Created FieldtypeFieldsetOpen user_login_fieldset"));
         } else if ($user_login_fieldset->type != 'FieldtypeFieldsetOpen') {
             throw new WireException("Field 'user_login_fieldset' exists, but is of wrong type!");
         }
@@ -177,6 +178,7 @@ class LoginScheduler extends WireData implements Module, ConfigurableModule {
             $user_login_fieldset_close->type = wire('modules')->get('FieldtypeFieldsetClose');
             $user_login_fieldset_close->name = 'user_login_fieldset' . FieldtypeFieldsetOpen::fieldsetCloseIdentifier;
             $user_login_fieldset_close->save();
+            $this->session->message($this->_("Created FieldtypeFieldsetClose user_login_fieldset"));
         } else if ($user_login_fieldset_close->type != 'FieldtypeFieldsetClose') {
             throw new WireException("Field 'user_login_fieldset_close' exists, but is of wrong type!");
         }
@@ -190,6 +192,7 @@ class LoginScheduler extends WireData implements Module, ConfigurableModule {
             $user_login_disabled->label = 'Login disabled';
             $user_login_disabled->notes = 'Note that this will override any values populated in the \'Login enabled starting from\' field.';
             $user_login_disabled->save();
+            $this->session->message($this->_("Created FieldtypeCheckbox user_login_disabled"));
         } else if ($user_login_disabled->type != 'FieldtypeCheckbox') {
             throw new WireException("Field 'user_login_disabled' exists, but is of wrong type!");
         }
@@ -207,6 +210,7 @@ class LoginScheduler extends WireData implements Module, ConfigurableModule {
             $user_login_enabled_from->timeInputFormat = "H:i";
             $user_login_enabled_from->dateOutputFormat = "Y-m-d H:i";
             $user_login_enabled_from->save();
+            $this->session->message($this->_("Created FieldtypeDatetime user_login_enabled_from"));
         } else if ($user_login_enabled_from->type != 'FieldtypeDatetime') {
             throw new WireException("Field 'user_login_enabled_from' exists, but is of wrong type!");
         }
@@ -224,12 +228,13 @@ class LoginScheduler extends WireData implements Module, ConfigurableModule {
             $user_login_enabled_until->timeInputFormat = "H:i";
             $user_login_enabled_until->dateOutputFormat = "Y-m-d H:i";
             $user_login_enabled_until->save();
+            $this->session->message($this->_("Created FieldtypeDatetime user_login_enabled_until"));
         } else if ($user_login_enabled_until->type != 'FieldtypeDatetime') {
             throw new WireException("Field 'user_login_enabled_until' exists, but is of wrong type!");
         }
 
         // add fields to user template(s)/fieldgroup(s)
-        $template_ids = wire('config')->userTemplateIDs ? wire('config')->userTemplateIDs : array(wire('config')->userTemplateID);
+        $template_ids = wire('config')->userTemplateIDs ?: array(wire('config')->userTemplateID);
         foreach ($template_ids as $template_id) {
             $template = wire('templates')->get((int) $template_id);
             if ($template->id) {
@@ -239,6 +244,10 @@ class LoginScheduler extends WireData implements Module, ConfigurableModule {
                 $template->fields->add($user_login_enabled_until);
                 $template->fields->add($user_login_fieldset_close);
                 $template->fields->save();
+                $this->session->message(sprintf(
+                    $this->_("Added LoginScheduler fields to template %s"),
+                    $template->name
+                ));
             }
         }
         
@@ -267,13 +276,24 @@ class LoginScheduler extends WireData implements Module, ConfigurableModule {
                         if ($field) {
                             $template->fields->remove($field);
                             $template->fields->save();
+                            $this->session->message(sprintf(
+                                $this->_("Removed field %s from template %s"),
+                                $field->name,
+                                $template->name
+                            ));
                         }
                     }
                 }
             }
             foreach ($field_names as $field_name) {
                 $field = wire('fields')->get($field_name);
-                if ($field) wire('fields')->delete($field);
+                if ($field) {
+                    wire('fields')->delete($field);
+                    $this->session->message(sprintf(
+                        $this->_("Removed field %s"),
+                        $field->name
+                    ));
+                }
             }
         }
     }
